@@ -6,9 +6,11 @@ pixel level. The app binds to `127.0.0.1` only: files never leave your computer.
 ## What it does
 
 - Thumbnail contact sheet for folders, images, video, audio, apps, and files
+- Large image previews and muted autoplaying video previews on thumbnail hover
 - Image and video zoom from Fit through 800%, with drag-to-pan pixel inspection
 - Autoplay on video selection; click the preview itself to play or pause
-- Video-only transport controls, rapid ±10/30 second jumps, and 0.5×–2× speed
+- Full video controls: seek, volume, mute, ±10/30 second jumps, 0.5×–2× speed,
+  fullscreen, and picture-in-picture
 - Configurable, renameable one-key moves (`1`–`4`) with native folder pickers
 - Auto-advance after sorting and Shift-click range selection
 - Recoverable Recycle Bin / Trash action (`Ctrl+Backspace`)

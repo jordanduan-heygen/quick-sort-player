@@ -105,6 +105,11 @@
         <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
         <span id="time-value" class="time-value">0:00 / 0:00</span>
         <button id="forward-10" class="transport-button">+10s</button>
+        <button id="mute-button" class="transport-button" aria-label="Mute video">Mute</button>
+        <label class="volume-control" title="Volume">
+          <span class="sr-only">Volume</span>
+          <input id="volume" type="range" min="0" max="1" step="0.05" value="0.8" aria-label="Volume">
+        </label>
         <select id="speed" aria-label="Playback speed">
           <option value="0.5">0.5×</option>
           <option value="0.75">0.75×</option>
@@ -113,6 +118,8 @@
           <option value="1.5">1.5×</option>
           <option value="2">2×</option>
         </select>
+        <button id="pip-button" class="transport-button" title="Picture in picture">PiP</button>
+        <button id="fullscreen-button" class="transport-button" title="Fullscreen">Full</button>
       </section>
 
       <footer id="action-bar" class="action-bar hidden">
@@ -159,7 +166,7 @@
     </div>
     <div class="shortcut-grid">
       <section><h3>Navigate</h3><p><kbd>↑</kbd><kbd>↓</kbd> Previous / next</p><p><kbd>Enter</kbd> Open folder</p><p><kbd>G</kbd> then <kbd>D</kbd> Downloads</p><p><kbd>G</kbd> then <kbd>P</kbd> Pictures</p><p><kbd>G</kbd> then <kbd>V</kbd> Videos</p><p><kbd>Ctrl K</kbd> Command palette</p></section>
-      <section><h3>Inspect</h3><p><kbd>+</kbd><kbd>−</kbd> Zoom</p><p><kbd>0</kbd> Fit</p><p><kbd>Space</kbd> Play / pause video</p><p><kbd>J</kbd><kbd>L</kbd> Jump 10 seconds</p><p><kbd>Shift J</kbd><kbd>Shift L</kbd> Jump 30 seconds</p></section>
+      <section><h3>Inspect</h3><p><kbd>+</kbd><kbd>−</kbd> Zoom</p><p><kbd>0</kbd> Fit</p><p><kbd>Space</kbd> Play / pause video</p><p><kbd>M</kbd> Mute / unmute</p><p><kbd>F</kbd> Fullscreen</p><p><kbd>[</kbd><kbd>]</kbd> Playback speed</p><p><kbd>J</kbd><kbd>L</kbd> Jump 10 seconds</p><p><kbd>Shift J</kbd><kbd>Shift L</kbd> Jump 30 seconds</p></section>
       <section><h3>Sort</h3><p><kbd>1</kbd> Apps</p><p><kbd>2</kbd> Media</p><p><kbd>3</kbd> Images</p><p><kbd>4</kbd> Other files</p><p><kbd>Ctrl Z</kbd> Undo move</p><p><kbd>Ctrl ⌫</kbd> Recycle Bin</p></section>
     </div>
   </dialog>
@@ -173,6 +180,16 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <aside id="hover-preview" class="hover-preview hidden" aria-hidden="true">
+    <div class="hover-preview-media">
+      <img id="hover-preview-image" class="hidden" alt="">
+      <video id="hover-preview-video" class="hidden" muted loop playsinline preload="metadata"></video>
+    </div>
+    <div class="hover-preview-copy">
+      <strong id="hover-preview-name"></strong>
+      <span id="hover-preview-kind"></span>
+    </div>
+  </aside>
   <script src="/app.js" defer></script>
 </body>
 </html>

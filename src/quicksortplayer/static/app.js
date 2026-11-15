@@ -20,6 +20,8 @@ const state = {
   recentFolders: JSON.parse(localStorage.getItem("quick-sort-recent-folders") || "[]"),
   dragMoved: false,
   selectionAnchor: null,
+  hoverTimer: null,
+  hoverPath: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -27,6 +29,9 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const imagePreview = $("#image-preview");
 const videoPreview = $("#video-preview");
 const stage = $("#stage");
+const hoverPreview = $("#hover-preview");
+const hoverPreviewImage = $("#hover-preview-image");
+const hoverPreviewVideo = $("#hover-preview-video");
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -224,6 +229,52 @@ function itemMatches(item) {
   return queryMatch && categoryMatch;
 }
 
+function hideHoverPreview() {
+  clearTimeout(state.hoverTimer);
+  state.hoverTimer = null;
+  state.hoverPath = null;
+  hoverPreview.classList.add("hidden");
+  hoverPreview.setAttribute("aria-hidden", "true");
+  hoverPreviewImage.classList.add("hidden");
+  hoverPreviewImage.removeAttribute("src");
+  hoverPreviewVideo.pause();
+  hoverPreviewVideo.classList.add("hidden");
+  hoverPreviewVideo.removeAttribute("src");
+  hoverPreviewVideo.removeAttribute("poster");
+  hoverPreviewVideo.load();
+}
+
+function queueHoverPreview(item, row) {
+  hideHoverPreview();
+  const isImage = item.category === "images";
+  const isVideo = item.category === "videos" && item.kind.toLowerCase().includes("video");
+  if (!isImage && !isVideo) return;
+  state.hoverTimer = setTimeout(() => {
+    if (!row.isConnected || !row.matches(":hover")) return;
+    state.hoverPath = item.path;
+    const rect = row.getBoundingClientRect();
+    const width = Math.min(380, window.innerWidth - 28);
+    const left = Math.min(rect.right + 14, window.innerWidth - width - 14);
+    const top = Math.max(14, Math.min(rect.top, window.innerHeight - 350));
+    hoverPreview.style.left = `${Math.max(14, left)}px`;
+    hoverPreview.style.top = `${top}px`;
+    $("#hover-preview-name").textContent = item.name;
+    $("#hover-preview-kind").textContent = `${item.kind} · ${formatBytes(item.size)}`;
+    if (isVideo) {
+      hoverPreviewVideo.poster = endpoint("/api/thumbnail", { path: item.path });
+      hoverPreviewVideo.src = endpoint("/api/media", { path: item.path });
+      hoverPreviewVideo.classList.remove("hidden");
+      hoverPreviewVideo.play().catch(() => { /* Unsupported codecs still retain the static thumbnail. */ });
+    } else {
+      hoverPreviewImage.src = endpoint("/api/thumbnail", { path: item.path });
+      hoverPreviewImage.alt = item.name;
+      hoverPreviewImage.classList.remove("hidden");
+    }
+    hoverPreview.classList.remove("hidden");
+    hoverPreview.setAttribute("aria-hidden", "false");
+  }, 180);
+}
+
 function renderFiles({ preserveScroll = false } = {}) {
   state.visibleItems = state.items.filter(itemMatches);
   const list = $("#file-list");
@@ -255,12 +306,14 @@ function renderFiles({ preserveScroll = false } = {}) {
     <div class="load-more" role="status">Showing ${renderedItems.length.toLocaleString()} of ${state.visibleItems.length.toLocaleString()} · scroll for more</div>
   ` : "");
   $$(".file-row").forEach((row) => {
+    const item = state.items.find((candidate) => candidate.path === row.dataset.path);
     row.addEventListener("click", (event) => {
-      const item = state.items.find((candidate) => candidate.path === row.dataset.path);
       const toggle = event.metaKey || event.ctrlKey;
       if (item?.is_dir && !toggle && !event.shiftKey) loadFolder(item.path);
       else selectItem(row.dataset.path, toggle, event.shiftKey);
     });
+    row.addEventListener("mouseenter", () => { if (item) queueHoverPreview(item, row); });
+    row.addEventListener("mouseleave", hideHoverPreview);
   });
   $$(".thumbnail img").forEach((image) => image.addEventListener("error", () => image.closest(".thumbnail").classList.add("thumb-failed")));
   if (preserveScroll) list.scrollTop = previousScroll;
@@ -414,6 +467,37 @@ function jumpVideo(seconds) {
   videoPreview.currentTime = Math.max(0, Math.min(videoPreview.duration || 0, videoPreview.currentTime + seconds));
 }
 
+function toggleMute() {
+  if (videoPreview.classList.contains("hidden")) return;
+  videoPreview.muted = !videoPreview.muted;
+  localStorage.setItem("quick-sort-muted", String(videoPreview.muted));
+}
+
+function adjustSpeed(direction) {
+  if (videoPreview.classList.contains("hidden")) return;
+  const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+  const current = speeds.indexOf(videoPreview.playbackRate);
+  const next = Math.max(0, Math.min(speeds.length - 1, (current < 0 ? 2 : current) + direction));
+  videoPreview.playbackRate = speeds[next];
+  $("#speed").value = String(speeds[next]);
+  localStorage.setItem("quick-sort-playback-rate", String(speeds[next]));
+}
+
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await $(".inspector-pane").requestFullscreen();
+  } catch (error) { showToast("Fullscreen is not available in this browser"); }
+}
+
+async function togglePictureInPicture() {
+  if (videoPreview.classList.contains("hidden") || !document.pictureInPictureEnabled) return;
+  try {
+    if (document.pictureInPictureElement) await document.exitPictureInPicture();
+    else await videoPreview.requestPictureInPicture();
+  } catch (_) { showToast("Picture in picture is not available for this video"); }
+}
+
 async function moveSelected(category) {
   const paths = selectedItems().filter((item) => !item.is_dir || category === "files").map((item) => item.path);
   const destination = state.config.destinations?.[category];
@@ -562,6 +646,8 @@ function handleKeydown(event) {
     "3": () => moveSelected("images"), "4": () => moveSelected("files"),
     " ": toggleVideo, "+": () => setZoom("in"), "=": () => setZoom("in"),
     "-": () => setZoom("out"), "0": () => setZoom("fit"),
+    m: toggleMute, f: toggleFullscreen,
+    "[": () => adjustSpeed(-1), "]": () => adjustSpeed(1),
     j: () => jumpVideo(event.shiftKey ? -30 : -10), l: () => jumpVideo(event.shiftKey ? 30 : 10),
     enter: () => { if (state.primary?.is_dir) loadFolder(state.primary.path); },
   };
@@ -582,7 +668,19 @@ function bindEvents() {
   $("#play-button").addEventListener("click", toggleVideo);
   $("#back-10").addEventListener("click", () => jumpVideo(-10));
   $("#forward-10").addEventListener("click", () => jumpVideo(10));
-  $("#speed").addEventListener("change", (event) => { videoPreview.playbackRate = Number(event.target.value); });
+  $("#mute-button").addEventListener("click", toggleMute);
+  $("#volume").addEventListener("input", (event) => {
+    videoPreview.volume = Number(event.target.value);
+    videoPreview.muted = videoPreview.volume === 0;
+    localStorage.setItem("quick-sort-volume", event.target.value);
+    localStorage.setItem("quick-sort-muted", String(videoPreview.muted));
+  });
+  $("#speed").addEventListener("change", (event) => {
+    videoPreview.playbackRate = Number(event.target.value);
+    localStorage.setItem("quick-sort-playback-rate", event.target.value);
+  });
+  $("#pip-button").addEventListener("click", togglePictureInPicture);
+  $("#fullscreen-button").addEventListener("click", toggleFullscreen);
   $("#seek").addEventListener("input", (event) => {
     if (Number.isFinite(videoPreview.duration)) videoPreview.currentTime = videoPreview.duration * Number(event.target.value) / 1000;
   });
@@ -631,6 +729,11 @@ function bindEvents() {
     applyZoom();
   });
   videoPreview.addEventListener("loadedmetadata", () => {
+    videoPreview.volume = Number(localStorage.getItem("quick-sort-volume") ?? "0.8");
+    videoPreview.muted = localStorage.getItem("quick-sort-muted") === "true";
+    videoPreview.playbackRate = Number(localStorage.getItem("quick-sort-playback-rate") ?? "1");
+    $("#volume").value = String(videoPreview.volume);
+    $("#speed").value = String(videoPreview.playbackRate);
     const dimensions = mediaDimensions(videoPreview);
     if (dimensions.width) $("#selected-meta").textContent += ` · ${dimensions.width} × ${dimensions.height}px`;
     applyZoom();
@@ -641,6 +744,10 @@ function bindEvents() {
   });
   videoPreview.addEventListener("play", () => { $("#play-button").textContent = "Pause"; });
   videoPreview.addEventListener("pause", () => { $("#play-button").textContent = "Play"; });
+  videoPreview.addEventListener("volumechange", () => {
+    $("#volume").value = String(videoPreview.muted ? 0 : videoPreview.volume);
+    $("#mute-button").textContent = videoPreview.muted || videoPreview.volume === 0 ? "Unmute" : "Mute";
+  });
   videoPreview.addEventListener("click", () => {
     if (!state.dragMoved) toggleVideo();
     state.dragMoved = false;
@@ -665,6 +772,10 @@ function bindEvents() {
     applyZoom();
   });
   stage.addEventListener("pointerup", () => { state.dragging = false; stage.classList.remove("dragging"); });
+  document.addEventListener("fullscreenchange", () => {
+    $("#fullscreen-button").textContent = document.fullscreenElement ? "Exit full" : "Full";
+  });
+  $("#pip-button").hidden = !document.pictureInPictureEnabled;
 }
 
 function startLiveReload() {
