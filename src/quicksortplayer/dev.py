@@ -17,7 +17,7 @@ def _open_when_ready(url: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Quick Sort Player locally with live reload")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("QUICK_SORT_PORT", "8766")))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("QUICK_SORT_PORT", "8767")))
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--no-reload", action="store_true")
     args = parser.parse_args()

@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from quicksortplayer import server
 from quicksortplayer.server import app
 
 
@@ -39,3 +40,48 @@ def test_static_app_loads():
     response = client.get("/")
     assert response.status_code == 200
     assert "Quick Sort" in response.text
+
+
+def test_review_state_round_trip(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(server, "REVIEW_FILE", tmp_path / "review.json")
+    photo = tmp_path / "photo.jpg"
+    photo.write_bytes(b"photo")
+    response = client.put("/api/review", json={"path": str(photo), "status": "keep", "rating": 4, "tags": ["grad", "favorite"]})
+    assert response.status_code == 200
+    folder = client.get("/api/review", params={"folder": str(tmp_path)}).json()["records"]
+    assert folder[str(photo)]["rating"] == 4
+    assert folder[str(photo)]["status"] == "keep"
+
+
+def test_duplicate_scan_and_metadata(tmp_path: Path):
+    first = tmp_path / "one.png"
+    second = tmp_path / "two.png"
+    Image.new("RGB", (32, 24), "#4cb3f0").save(first)
+    second.write_bytes(first.read_bytes())
+    duplicates = client.get("/api/duplicates", params={"path": str(tmp_path)})
+    assert duplicates.status_code == 200
+    assert any({str(first), str(second)} == set(group) for group in duplicates.json()["exact"])
+    metadata = client.get("/api/metadata", params={"path": str(first)}).json()
+    assert metadata["width"] == 32
+    assert metadata["height"] == 24
+
+
+def test_batch_rename_contract(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(server, "REVIEW_FILE", tmp_path / "review.json")
+    source = tmp_path / "original.txt"
+    source.write_text("hello")
+    response = client.post("/api/rename", json={"paths": [str(source)], "pattern": "sorted_{index}_{name}"})
+    assert response.status_code == 200
+    assert (tmp_path / "sorted_001_original.txt").read_text() == "hello"
+
+
+def test_custom_shortcuts_are_persisted(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(server, "CONFIG_FILE", tmp_path / "config.json")
+    response = client.put("/api/config", json={
+        "destinations": {"photos": str(tmp_path / "Photos")},
+        "labels": {"photos": "Best photos"},
+        "keybindings": {"keep": "Q", "move:photos": "7"},
+    })
+    assert response.status_code == 200
+    assert response.json()["keybindings"]["keep"] == "Q"
+    assert server.load_config()["labels"]["photos"] == "Best photos"

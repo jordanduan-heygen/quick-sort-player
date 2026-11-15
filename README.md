@@ -10,10 +10,17 @@ pixel level. The app binds to `127.0.0.1` only: files never leave your computer.
 - Image and video zoom from Fit through 800%, with drag-to-pan pixel inspection
 - Autoplay on video selection; click the preview itself to play or pause
 - Full video controls: seek, volume, mute, ±10/30 second jumps, 0.5×–2× speed,
-  fullscreen, and picture-in-picture
-- Configurable, renameable one-key moves (`1`–`4`) with native folder pickers
+  frame stepping, filmstrip, fullscreen, and picture-in-picture; originals play without transcoding
+- Configurable, renameable one-key moves (up to nine) with native folder pickers and drag-and-drop
 - Auto-advance after sorting and Shift-click range selection
-- Recoverable Recycle Bin / Trash action (`Ctrl+Backspace`)
+- Keep/Reject queues, ratings, tags, review progress, and resumable folder sessions
+- Side-by-side media comparison with synchronized playback and zoom
+- Exact and visual duplicate finding, batch rename previews, and metadata inspection
+- Local fuzzy search across names, types, tags, ratings, and review status
+- Collapsible Library, file rail, Places, and destination sections
+- Fully customizable keyboard shortcuts
+- Background thumbnail indexing for large folders
+- Recoverable Recycle Bin / Trash action (`Delete`)
 - Undo for ordinary moves (`Ctrl+Z`)
 - Direct location chords such as `G` then `D` for Downloads
 - Command palette (`Ctrl+K`), search (`/`), and a complete keyboard map (`?`)
@@ -32,7 +39,7 @@ Download and extract this repository, then open PowerShell in the folder:
 .\run.cmd
 ```
 
-The app opens automatically at [http://127.0.0.1:8766](http://127.0.0.1:8766).
+The app opens automatically at [http://127.0.0.1:8767](http://127.0.0.1:8767).
 Keep the terminal open while using it. Press `Ctrl+C` there to stop the server.
 
 ## macOS / Linux

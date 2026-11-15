@@ -15,6 +15,8 @@
     </div>
     <nav id="breadcrumbs" class="breadcrumbs" aria-label="Current folder"></nav>
     <div class="top-actions">
+      <button id="toggle-library" class="chrome-button" aria-pressed="true" title="Toggle library sidebar">Library</button>
+      <button id="toggle-files" class="chrome-button" aria-pressed="true" title="Toggle file rail">Files</button>
       <button id="open-folder" class="button button-primary">Open folder</button>
       <button id="open-palette" class="button command-button" aria-label="Open command palette">
         Jump or act <kbd>Ctrl K</kbd>
@@ -24,20 +26,20 @@
 
   <div class="workspace">
     <aside class="locations-pane" aria-label="Locations and destinations">
-      <div>
-        <h1>Library</h1>
-        <p class="pane-note">Local files only</p>
+      <div class="library-head">
+        <div><h1>Library</h1><p class="pane-note">Local files only</p></div>
+        <button id="collapse-library" class="pane-collapse" title="Collapse library" aria-label="Collapse library">‹</button>
       </div>
-      <section>
-        <h2>Places</h2>
-        <nav id="locations" class="nav-list"></nav>
+      <section id="places-section">
+        <button class="section-toggle" data-collapse-section="places-section"><h2>Places</h2><span>⌄</span></button>
+        <nav id="locations" class="nav-list section-content"></nav>
       </section>
-      <section class="destination-section">
+      <section id="sort-section" class="destination-section">
         <div class="section-row">
-          <h2>Sort to</h2>
+          <button class="section-toggle" data-collapse-section="sort-section"><h2>Sort to</h2><span>⌄</span></button>
           <button id="settings-button" class="text-button">Edit</button>
         </div>
-        <div id="destinations" class="destination-list"></div>
+        <div id="destinations" class="destination-list section-content"></div>
       </section>
       <div class="sidebar-footer">
         <button id="undo-button" class="nav-action">Undo last move <kbd>Ctrl Z</kbd></button>
@@ -51,11 +53,12 @@
           <h2 id="folder-name">Files</h2>
           <p id="file-count" class="pane-note">Loading…</p>
         </div>
-        <button id="parent-folder" class="icon-button" title="Parent folder" aria-label="Go to parent folder">↑</button>
+        <span id="review-progress" class="progress-pill">0 reviewed</span>
+        <div class="browser-head-actions"><button id="collapse-files" class="pane-collapse" title="Collapse files" aria-label="Collapse file rail">‹</button><button id="parent-folder" class="icon-button" title="Parent folder" aria-label="Go to parent folder">↑</button></div>
       </div>
       <label class="search-field">
         <span class="sr-only">Filter files</span>
-        <input id="search" type="search" placeholder="Filter this folder" autocomplete="off">
+        <input id="search" type="search" placeholder="Search names, types, tags…" autocomplete="off">
         <kbd>/</kbd>
       </label>
       <div id="category-filters" class="filter-row" aria-label="File type filter">
@@ -64,6 +67,9 @@
         <button data-filter="images">Images</button>
         <button data-filter="apps">Apps</button>
         <button data-filter="files">Other</button>
+        <button data-review-filter="unreviewed">Unreviewed</button>
+        <button data-review-filter="keep">Kept</button>
+        <button data-review-filter="reject">Rejected</button>
       </div>
       <div id="file-list" class="file-list" role="listbox" aria-label="Files and folders" tabindex="0"></div>
     </section>
@@ -83,6 +89,16 @@
         </div>
       </header>
 
+      <section id="review-bar" class="review-bar hidden" aria-label="Review controls">
+        <button id="keep-button" class="review-decision keep">Keep <kbd>K</kbd></button>
+        <button id="reject-button" class="review-decision reject">Reject <kbd>X</kbd></button>
+        <div id="rating" class="rating" aria-label="Rating">
+          <button data-rating="1" aria-label="1 star">★</button><button data-rating="2" aria-label="2 stars">★</button><button data-rating="3" aria-label="3 stars">★</button><button data-rating="4" aria-label="4 stars">★</button><button data-rating="5" aria-label="5 stars">★</button>
+        </div>
+        <label class="tag-field"><span class="sr-only">Tags</span><input id="tags" placeholder="Tags, comma separated"></label>
+        <button id="tools-button" class="transport-button">Tools</button>
+      </section>
+
       <section id="stage" class="stage" aria-label="Media preview">
         <div id="empty-preview" class="empty-preview">
           <div class="empty-frame" aria-hidden="true"></div>
@@ -99,12 +115,16 @@
         <div id="pixel-badge" class="pixel-badge hidden">Pixel view</div>
       </section>
 
+      <section id="filmstrip" class="filmstrip hidden" aria-label="Video filmstrip"></section>
+
       <section id="transport" class="transport hidden" aria-label="Video controls">
         <button id="play-button" class="play-button">Play</button>
         <button id="back-10" class="transport-button">−10s</button>
+        <button id="frame-back" class="transport-button" title="Previous frame">‹ Frame</button>
         <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
         <span id="time-value" class="time-value">0:00 / 0:00</span>
         <button id="forward-10" class="transport-button">+10s</button>
+        <button id="frame-forward" class="transport-button" title="Next frame">Frame ›</button>
         <button id="mute-button" class="transport-button" aria-label="Mute video">Mute</button>
         <label class="volume-control" title="Volume">
           <span class="sr-only">Volume</span>
@@ -120,18 +140,14 @@
         </select>
         <button id="pip-button" class="transport-button" title="Picture in picture">PiP</button>
         <button id="fullscreen-button" class="transport-button" title="Fullscreen">Full</button>
+        <span class="quality-badge" title="The original local file is played without transcoding">Original</span>
       </section>
 
       <footer id="action-bar" class="action-bar hidden">
         <div class="action-selection"><span id="selection-count">1 selected</span></div>
         <div class="action-buttons">
-          <button data-move="apps"><span data-role="destination-label">Apps</span><kbd>1</kbd><span class="quick-edit" data-edit-destination="apps" title="Choose folder">•••</span></button>
-          <button data-move="videos"><span data-role="destination-label">Media</span><kbd>2</kbd><span class="quick-edit" data-edit-destination="videos" title="Choose folder">•••</span></button>
-          <button data-move="images"><span data-role="destination-label">Images</span><kbd>3</kbd><span class="quick-edit" data-edit-destination="images" title="Choose folder">•••</span></button>
-          <button data-move="files"><span data-role="destination-label">Files</span><kbd>4</kbd><span class="quick-edit" data-edit-destination="files" title="Choose folder">•••</span></button>
-          <button id="open-default-button">Open</button>
-          <button id="reveal-button">Reveal</button>
-          <button id="trash-button" class="danger-button">Recycle Bin <kbd>Ctrl ⌫</kbd></button>
+          <div id="action-destinations" class="destination-chips"></div>
+          <button id="quick-trash-button" class="danger-button">Recycle Bin <kbd>Delete</kbd></button>
         </div>
       </footer>
     </main>
@@ -155,8 +171,45 @@
         <button type="button" class="close-dialog" data-close="settings">Close</button>
       </header>
       <div id="settings-fields" class="settings-fields"></div>
-      <footer><button type="submit" class="button button-primary">Save shortcuts</button></footer>
+      <footer><button id="add-destination" type="button">Add shortcut</button><button type="submit" class="button button-primary">Save shortcuts</button></footer>
     </form>
+  </dialog>
+
+  <dialog id="tools" class="dialog tools-dialog">
+    <header class="dialog-head"><div><h2>File tools</h2><p>Advanced actions stay here to keep the player clean.</p></div><button type="button" class="close-dialog" data-close="tools">Close</button></header>
+    <div class="tools-grid">
+      <button id="compare-button"><strong>Compare selected</strong><span>Two files, side by side</span></button>
+      <button id="duplicates-button"><strong>Find duplicates</strong><span>Exact and visually matching</span></button>
+      <button id="rename-button"><strong>Batch rename</strong><span>Preview patterns before applying</span></button>
+      <button id="metadata-button"><strong>File information</strong><span>Dates, dimensions, camera, and size</span></button>
+      <button id="open-default-button"><strong>Open externally</strong><span>Use the default desktop app</span></button>
+      <button id="reveal-button"><strong>Reveal in folder</strong><span>Show in Explorer or Finder</span></button>
+      <button id="trash-button" class="danger-tool"><strong>Recycle Bin</strong><span>Recoverable deletion</span></button>
+    </div>
+  </dialog>
+
+  <dialog id="compare" class="dialog compare-dialog">
+    <header class="dialog-head"><div><h2>Compare</h2><p>Zoom and playback stay synchronized.</p></div><div class="compare-actions"><button id="compare-play">Play both</button><button id="compare-zoom-out">−</button><button id="compare-zoom-in">+</button><button type="button" class="close-dialog" data-close="compare">Close</button></div></header>
+    <div id="compare-grid" class="compare-grid"></div>
+  </dialog>
+
+  <dialog id="duplicates" class="dialog duplicates-dialog">
+    <header class="dialog-head"><div><h2>Duplicate finder</h2><p id="duplicates-summary">Scanning this folder…</p></div><button type="button" class="close-dialog" data-close="duplicates">Close</button></header>
+    <div id="duplicates-results" class="duplicates-results"></div>
+  </dialog>
+
+  <dialog id="rename" class="dialog rename-dialog">
+    <form id="rename-form">
+      <header class="dialog-head"><div><h2>Batch rename</h2><p>Use {name}, {index}, and {date}. Extensions are preserved.</p></div><button type="button" class="close-dialog" data-close="rename">Close</button></header>
+      <label class="rename-pattern">Pattern <input id="rename-pattern" value="{date}_{index}_{name}"></label>
+      <div id="rename-preview" class="rename-preview"></div>
+      <footer><button type="submit" class="button button-primary">Rename files</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="metadata" class="dialog metadata-dialog">
+    <header class="dialog-head"><div><h2>File information</h2><p>Metadata from the selected file.</p></div><button type="button" class="close-dialog" data-close="metadata">Close</button></header>
+    <dl id="metadata-grid" class="metadata-grid"></dl>
   </dialog>
 
   <dialog id="shortcuts" class="dialog shortcuts-dialog">
@@ -164,11 +217,8 @@
       <div><h2>Keyboard map</h2><p>Keep your hands off the mouse.</p></div>
       <button type="button" class="close-dialog" data-close="shortcuts">Close</button>
     </div>
-    <div class="shortcut-grid">
-      <section><h3>Navigate</h3><p><kbd>↑</kbd><kbd>↓</kbd> Previous / next</p><p><kbd>Enter</kbd> Open folder</p><p><kbd>G</kbd> then <kbd>D</kbd> Downloads</p><p><kbd>G</kbd> then <kbd>P</kbd> Pictures</p><p><kbd>G</kbd> then <kbd>V</kbd> Videos</p><p><kbd>Ctrl K</kbd> Command palette</p></section>
-      <section><h3>Inspect</h3><p><kbd>+</kbd><kbd>−</kbd> Zoom</p><p><kbd>0</kbd> Fit</p><p><kbd>Space</kbd> Play / pause video</p><p><kbd>M</kbd> Mute / unmute</p><p><kbd>F</kbd> Fullscreen</p><p><kbd>[</kbd><kbd>]</kbd> Playback speed</p><p><kbd>J</kbd><kbd>L</kbd> Jump 10 seconds</p><p><kbd>Shift J</kbd><kbd>Shift L</kbd> Jump 30 seconds</p></section>
-      <section><h3>Sort</h3><p><kbd>1</kbd> Apps</p><p><kbd>2</kbd> Media</p><p><kbd>3</kbd> Images</p><p><kbd>4</kbd> Other files</p><p><kbd>Ctrl Z</kbd> Undo move</p><p><kbd>Ctrl ⌫</kbd> Recycle Bin</p></section>
-    </div>
+    <div id="shortcut-editor" class="shortcut-editor"></div>
+    <footer class="shortcut-footer"><button id="reset-shortcuts" type="button">Reset defaults</button><button id="save-shortcuts" type="button" class="button button-primary">Save shortcuts</button></footer>
   </dialog>
 
   <dialog id="confirm-trash" class="dialog confirm-dialog">

@@ -4,9 +4,11 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Literal
@@ -29,10 +31,12 @@ STATIC_DIR = PACKAGE_DIR / "static"
 STATE_DIR = Path(os.environ.get("QUICK_SORT_STATE_DIR", Path.home() / ".quick-sort-player"))
 THUMB_DIR = STATE_DIR / "thumbnails"
 CONFIG_FILE = STATE_DIR / "config.json"
+REVIEW_FILE = STATE_DIR / "review.json"
 MAX_THUMB_EDGE = 320
 
 app = FastAPI(title="Quick Sort Player", docs_url=None, redoc_url=None)
 undo_stack: list[list[MoveRecord]] = []
+index_jobs: dict[str, dict[str, object]] = {}
 
 
 @app.middleware("http")
@@ -56,8 +60,21 @@ class RevealRequest(BaseModel):
 
 
 class ConfigRequest(BaseModel):
-    destinations: dict[Literal["apps", "videos", "images", "files"], str]
-    labels: dict[Literal["apps", "videos", "images", "files"], str] | None = None
+    destinations: dict[str, str]
+    labels: dict[str, str] | None = None
+    keybindings: dict[str, str] | None = None
+
+
+class ReviewRequest(BaseModel):
+    path: str
+    status: Literal["unreviewed", "keep", "reject"] | None = None
+    rating: int | None = None
+    tags: list[str] | None = None
+
+
+class RenameRequest(BaseModel):
+    paths: list[str]
+    pattern: str
 
 
 def default_destinations() -> dict[str, str]:
@@ -74,10 +91,21 @@ def default_labels() -> dict[str, str]:
     return {"apps": "Apps", "videos": "Media", "images": "Images", "files": "Files"}
 
 
+def default_keybindings() -> dict[str, str]:
+    return {
+        "previous": "ArrowUp", "next": "ArrowDown", "open_folder": "Enter", "filter": "/",
+        "palette": "Ctrl+K", "play": "Space", "zoom_in": "+", "zoom_out": "-", "fit": "0",
+        "mute": "M", "fullscreen": "F", "speed_down": "[", "speed_up": "]",
+        "jump_back": "J", "jump_forward": "L", "jump_back_30": "Shift+J", "jump_forward_30": "Shift+L",
+        "keep": "K", "reject": "X", "trash": "Delete", "undo": "Ctrl+Z",
+    }
+
+
 def load_config() -> dict[str, object]:
     base: dict[str, object] = {
         "destinations": default_destinations(),
         "labels": default_labels(),
+        "keybindings": default_keybindings(),
         "show_hidden": False,
     }
     try:
@@ -94,6 +122,21 @@ def save_config(config: dict[str, object]) -> None:
     temporary = CONFIG_FILE.with_suffix(".tmp")
     temporary.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     temporary.replace(CONFIG_FILE)
+
+
+def load_review() -> dict[str, dict[str, object]]:
+    try:
+        stored = json.loads(REVIEW_FILE.read_text(encoding="utf-8"))
+        return stored if isinstance(stored, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_review(records: dict[str, dict[str, object]]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = REVIEW_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(REVIEW_FILE)
 
 
 def checked_path(raw: str, *, require_file: bool = False, require_dir: bool = False) -> Path:
@@ -161,9 +204,9 @@ def common_locations() -> list[dict[str, str]]:
     ]
 
 
-def thumb_cache_path(path: Path) -> Path:
+def thumb_cache_path(path: Path, marker: str = "thumb") -> Path:
     stat = path.stat()
-    digest = hashlib.sha256(f"{path}:{stat.st_mtime_ns}:{stat.st_size}".encode()).hexdigest()
+    digest = hashlib.sha256(f"{path}:{stat.st_mtime_ns}:{stat.st_size}:{marker}".encode()).hexdigest()
     return THUMB_DIR / f"{digest}.jpg"
 
 
@@ -194,6 +237,86 @@ def create_thumbnail(path: Path, destination: Path) -> None:
     else:
         raise ValueError("No thumbnail generator for this file type")
     temporary.replace(destination)
+
+
+def create_video_frame(path: Path, destination: Path, seconds: float) -> None:
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".tmp.jpg")
+    command = [
+        get_ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-ss", str(max(0, seconds)),
+        "-i", str(path), "-frames:v", "1", "-vf",
+        "scale=480:270:force_original_aspect_ratio=decrease", "-q:v", "4", "-y", str(temporary),
+    ]
+    subprocess.run(command, check=True, timeout=30)
+    temporary.replace(destination)
+
+
+def hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def perceptual_hash(path: Path) -> str | None:
+    try:
+        with Image.open(path) as image:
+            pixels = list(ImageOps.grayscale(image).resize((8, 8), Image.Resampling.LANCZOS).get_flattened_data())
+        average = sum(pixels) / len(pixels)
+        bits = "".join("1" if value >= average else "0" for value in pixels)
+        return f"{int(bits, 2):016x}"
+    except Exception:
+        return None
+
+
+def find_duplicates(folder: Path) -> dict[str, object]:
+    files = [path for path in folder.iterdir() if path.is_file()]
+    by_size: dict[int, list[Path]] = {}
+    for path in files:
+        try:
+            by_size.setdefault(path.stat().st_size, []).append(path)
+        except OSError:
+            pass
+    exact: list[list[str]] = []
+    for candidates in by_size.values():
+        if len(candidates) < 2:
+            continue
+        by_hash: dict[str, list[str]] = {}
+        for path in candidates:
+            try:
+                by_hash.setdefault(hash_file(path), []).append(str(path))
+            except OSError:
+                pass
+        exact.extend(group for group in by_hash.values() if len(group) > 1)
+    images = [path for path in files if path.suffix.lower() in IMAGE_EXTENSIONS][:500]
+    visual_clusters: list[tuple[int, list[str]]] = []
+    for path in images:
+        fingerprint = perceptual_hash(path)
+        if fingerprint:
+            value = int(fingerprint, 16)
+            cluster = next((group for representative, group in visual_clusters if (representative ^ value).bit_count() <= 6), None)
+            if cluster is None:
+                visual_clusters.append((value, [str(path)]))
+            else:
+                cluster.append(str(path))
+    visual = [group for _, group in visual_clusters if len(group) > 1]
+    return {"exact": exact, "visual": visual, "scanned": len(files), "visual_scanned": len(images)}
+
+
+def index_folder(folder: Path) -> None:
+    key = str(folder)
+    paths = [path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS | VIDEO_EXTENSIONS]
+    index_jobs[key] = {"status": "running", "done": 0, "total": len(paths)}
+    for number, path in enumerate(paths, 1):
+        try:
+            destination = thumb_cache_path(path)
+            if not destination.exists():
+                create_thumbnail(path, destination)
+        except Exception:
+            pass
+        index_jobs[key] = {"status": "running", "done": number, "total": len(paths)}
+    index_jobs[key] = {"status": "complete", "done": len(paths), "total": len(paths)}
 
 
 def choose_folder_native() -> str | None:
@@ -274,12 +397,145 @@ async def thumbnail(path: str) -> Response:
     return FileResponse(destination, media_type="image/jpeg")
 
 
+@app.get("/api/video-frame")
+async def video_frame(path: str, time: float = 0) -> Response:
+    file_path = checked_path(path, require_file=True)
+    if file_path.suffix.lower() not in VIDEO_EXTENSIONS:
+        raise HTTPException(400, "A video file is required")
+    destination = thumb_cache_path(file_path, f"frame:{time:.2f}")
+    if not destination.exists():
+        try:
+            await run_in_threadpool(create_video_frame, file_path, destination, time)
+        except Exception:
+            return Response(status_code=204)
+    return FileResponse(destination, media_type="image/jpeg")
+
+
+@app.get("/api/review")
+def review(folder: str) -> dict[str, object]:
+    folder_path = checked_path(folder, require_dir=True)
+    prefix = str(folder_path) + os.sep
+    records = {path: value for path, value in load_review().items() if path.startswith(prefix)}
+    return {"records": records}
+
+
+@app.put("/api/review")
+def update_review(request: ReviewRequest) -> dict[str, object]:
+    path = checked_path(request.path)
+    records = load_review()
+    record = records.get(str(path), {"status": "unreviewed", "rating": 0, "tags": []})
+    if request.status is not None:
+        record["status"] = request.status
+    if request.rating is not None:
+        record["rating"] = max(0, min(5, request.rating))
+    if request.tags is not None:
+        record["tags"] = [tag.strip() for tag in request.tags if tag.strip()][:20]
+    record["updated"] = time.time()
+    records[str(path)] = record
+    save_review(records)
+    return record
+
+
+@app.get("/api/metadata")
+def metadata(path: str) -> dict[str, object]:
+    file_path = checked_path(path)
+    stat = file_path.stat()
+    result: dict[str, object] = {
+        "name": file_path.name, "path": str(file_path), "kind": human_kind(file_path),
+        "size": stat.st_size, "created": stat.st_ctime, "modified": stat.st_mtime,
+        "extension": file_path.suffix.lower(),
+    }
+    if file_path.suffix.lower() in IMAGE_EXTENSIONS:
+        try:
+            with Image.open(file_path) as image:
+                result["width"], result["height"] = image.size
+                exif = image.getexif()
+                result["camera"] = exif.get(272)
+                result["maker"] = exif.get(271)
+                result["captured"] = exif.get(36867)
+                result["lens"] = exif.get(42036)
+        except Exception:
+            pass
+    elif file_path.suffix.lower() in VIDEO_EXTENSIONS | AUDIO_EXTENSIONS:
+        try:
+            probe = subprocess.run([get_ffmpeg_exe(), "-hide_banner", "-i", str(file_path)], text=True, capture_output=True, timeout=15)
+            duration = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", probe.stderr)
+            bitrate = re.search(r"bitrate:\s*(\d+\s*kb/s)", probe.stderr)
+            video = re.search(r"Video:\s*([^,]+).*?(\d{2,5})x(\d{2,5})", probe.stderr)
+            audio = re.search(r"Audio:\s*([^,]+)", probe.stderr)
+            if duration:
+                result["duration"] = int(duration.group(1)) * 3600 + int(duration.group(2)) * 60 + float(duration.group(3))
+            if bitrate:
+                result["bitrate"] = bitrate.group(1)
+            if video:
+                result.update({"video_codec": video.group(1).strip(), "width": int(video.group(2)), "height": int(video.group(3))})
+            if audio:
+                result["audio_codec"] = audio.group(1).strip()
+        except Exception:
+            pass
+    return result
+
+
+@app.get("/api/duplicates")
+async def duplicates(path: str) -> dict[str, object]:
+    folder = checked_path(path, require_dir=True)
+    return await run_in_threadpool(find_duplicates, folder)
+
+
+@app.post("/api/index")
+def start_index(request: RevealRequest) -> dict[str, object]:
+    folder = checked_path(request.path, require_dir=True)
+    current = index_jobs.get(str(folder))
+    if not current:
+        index_jobs[str(folder)] = {"status": "queued", "done": 0, "total": 0}
+        threading.Thread(target=index_folder, args=(folder,), daemon=True).start()
+    return index_jobs.get(str(folder), {"status": "queued", "done": 0, "total": 0})
+
+
+@app.get("/api/index")
+def index_status(path: str) -> dict[str, object]:
+    folder = checked_path(path, require_dir=True)
+    return index_jobs.get(str(folder), {"status": "idle", "done": 0, "total": 0})
+
+
+@app.post("/api/rename")
+def rename_files(request: RenameRequest) -> dict[str, object]:
+    paths = [checked_path(value) for value in request.paths]
+    if not request.pattern.strip():
+        raise HTTPException(400, "A rename pattern is required")
+    planned: list[tuple[Path, Path]] = []
+    for index, source in enumerate(paths, 1):
+        date = time.strftime("%Y-%m-%d", time.localtime(source.stat().st_mtime))
+        stem = request.pattern.replace("{name}", source.stem).replace("{index}", f"{index:03d}").replace("{date}", date)
+        target = source.with_name(f"{stem}{source.suffix}")
+        if target != source and target.exists():
+            raise HTTPException(409, f"A file already exists: {target.name}")
+        planned.append((source, target))
+    renamed = []
+    review_records = load_review()
+    for source, target in planned:
+        source.rename(target)
+        if str(source) in review_records:
+            review_records[str(target)] = review_records.pop(str(source))
+        renamed.append({"from": str(source), "to": str(target)})
+    save_review(review_records)
+    return {"renamed": renamed}
+
+
 @app.post("/api/move")
 def move(request: MoveRequest) -> dict[str, object]:
     destination = Path(request.destination).expanduser().resolve()
     records = move_paths([Path(value) for value in request.paths], destination)
     if records:
         undo_stack.append(records)
+        review_records = load_review()
+        changed = False
+        for record in records:
+            if str(record.source) in review_records:
+                review_records[str(record.destination)] = review_records.pop(str(record.source))
+                changed = True
+        if changed:
+            save_review(review_records)
     return {"moved": len(records), "destination": str(destination)}
 
 
@@ -294,8 +550,11 @@ def undo() -> dict[str, object]:
 @app.post("/api/trash")
 def trash(request: PathsRequest) -> dict[str, object]:
     paths = [checked_path(value) for value in request.paths]
+    review_records = load_review()
     for path in paths:
         send2trash(str(path))
+        review_records.pop(str(path), None)
+    save_review(review_records)
     return {"trashed": len(paths)}
 
 
@@ -335,6 +594,8 @@ def update_config(request: ConfigRequest) -> dict[str, object]:
     config["destinations"] = request.destinations
     if request.labels is not None:
         config["labels"] = request.labels
+    if request.keybindings is not None:
+        config["keybindings"] = request.keybindings
     save_config(config)
     return config
 

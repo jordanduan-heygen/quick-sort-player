@@ -22,6 +22,10 @@ const state = {
   selectionAnchor: null,
   hoverTimer: null,
   hoverPath: null,
+  review: {},
+  reviewFilter: "all",
+  compareZoom: 1,
+  indexTimer: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -88,6 +92,67 @@ function shortLabel(name) {
   return matches.slice(0, 2).join("").toUpperCase();
 }
 
+const DEFAULT_KEYBINDINGS = {
+  previous: "ArrowUp", next: "ArrowDown", open_folder: "Enter", filter: "/", palette: "Ctrl+K", shortcuts: "?",
+  play: "Space", zoom_in: "+", zoom_out: "-", fit: "0", mute: "M", fullscreen: "F",
+  speed_down: "[", speed_up: "]", jump_back: "J", jump_forward: "L", jump_back_30: "Shift+J", jump_forward_30: "Shift+L",
+  keep: "K", reject: "X", trash: "Delete", undo: "Ctrl+Z",
+};
+
+function bindingFor(action, fallback = "") {
+  return state.config.keybindings?.[action] || DEFAULT_KEYBINDINGS[action] || fallback;
+}
+
+function shortcutFromEvent(event) {
+  if (["Control", "Meta", "Alt", "Shift"].includes(event.key)) return null;
+  let key = event.key === " " ? "Space" : event.key;
+  if (key.length === 1 && /[a-z]/i.test(key)) key = key.toUpperCase();
+  const parts = [];
+  if (event.ctrlKey || event.metaKey) parts.push("Ctrl");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey && /^[A-Z]$/.test(key)) parts.push("Shift");
+  parts.push(key);
+  return parts.join("+");
+}
+
+function shortcutDefinitions() {
+  const destinations = Object.keys(state.config.destinations || {}).slice(0, 9).map((key, index) => ({ id: `move:${key}`, label: `Move to ${state.config.labels?.[key] || key}`, fallback: String(index + 1) }));
+  return [
+    { title: "Navigate", actions: [
+      { id: "previous", label: "Previous file" }, { id: "next", label: "Next file" }, { id: "open_folder", label: "Open folder" },
+      { id: "filter", label: "Filter files" }, { id: "palette", label: "Command palette" }, { id: "shortcuts", label: "Keyboard map" },
+    ] },
+    { title: "Inspect", actions: [
+      { id: "play", label: "Play / pause" }, { id: "zoom_in", label: "Zoom in" }, { id: "zoom_out", label: "Zoom out" }, { id: "fit", label: "Fit" },
+      { id: "mute", label: "Mute" }, { id: "fullscreen", label: "Fullscreen" }, { id: "speed_down", label: "Slower" }, { id: "speed_up", label: "Faster" },
+      { id: "jump_back", label: "Back 10 seconds" }, { id: "jump_forward", label: "Forward 10 seconds" },
+      { id: "jump_back_30", label: "Back 30 seconds" }, { id: "jump_forward_30", label: "Forward 30 seconds" },
+    ] },
+    { title: "Review & sort", actions: [
+      { id: "keep", label: "Keep and advance" }, { id: "reject", label: "Reject and advance" }, { id: "trash", label: "Recycle Bin" }, { id: "undo", label: "Undo move" }, ...destinations,
+    ] },
+  ];
+}
+
+function renderShortcutEditor() {
+  $("#shortcut-editor").innerHTML = shortcutDefinitions().map((section) => `
+    <section class="shortcut-section"><h3>${escapeHtml(section.title)}</h3>${section.actions.map((action) => `
+      <label class="shortcut-row"><span>${escapeHtml(action.label)}</span><input readonly data-shortcut="${escapeHtml(action.id)}" value="${escapeHtml(bindingFor(action.id, action.fallback || ""))}" aria-label="Shortcut for ${escapeHtml(action.label)}"></label>
+    `).join("")}</section>
+  `).join("");
+  $$('[data-shortcut]').forEach((input) => input.addEventListener("keydown", (event) => {
+    event.preventDefault(); event.stopPropagation();
+    const shortcut = shortcutFromEvent(event);
+    if (shortcut) input.value = shortcut;
+  }));
+}
+
+function updateShortcutLabels() {
+  $("#keep-button kbd").textContent = bindingFor("keep");
+  $("#reject-button kbd").textContent = bindingFor("reject");
+  $("#quick-trash-button kbd").textContent = bindingFor("trash");
+}
+
 async function loadInitialData() {
   const data = await api("/api/locations");
   state.locations = data.locations;
@@ -95,6 +160,8 @@ async function loadInitialData() {
   renderLocations();
   renderDestinations();
   renderSettings();
+  renderShortcutEditor();
+  updateShortcutLabels();
   const downloads = state.locations.find((location) => location.name === "Downloads");
   const linkedPath = new URLSearchParams(window.location.search).get("path");
   const rememberedPath = localStorage.getItem("quick-sort-last-path");
@@ -113,33 +180,77 @@ function renderLocations() {
 
 function renderDestinations() {
   const defaults = { apps: "Apps", videos: "Media", images: "Images", files: "Files" };
+  const keys = [...new Set([...Object.keys(state.config.destinations || {}), ...Object.keys(defaults)])].slice(0, 9);
   const labels = { ...defaults, ...(state.config.labels || {}) };
-  $("#destinations").innerHTML = Object.entries(labels).map(([category, label], index) => `
-    <button class="destination-item" data-move="${category}" data-short="${index + 1}">
-      <span>${escapeHtml(label)}</span><kbd>${index + 1}</kbd><span class="quick-edit" data-edit-destination="${category}" title="Choose folder">•••</span>
+  const markup = keys.map((category, index) => `
+    <button class="destination-item" draggable="true" data-move="${category}" data-short="${index + 1}">
+      <span>${escapeHtml(labels[category] || category)}</span><kbd>${escapeHtml(bindingFor(`move:${category}`, String(index + 1)))}</kbd><span class="quick-edit" data-edit-destination="${category}" title="Choose folder">•••</span>
+    </button>
+  `).join("");
+  $("#destinations").innerHTML = markup;
+  $("#action-destinations").innerHTML = keys.map((category, index) => `
+    <button data-move="${category}" title="${escapeHtml(state.config.destinations?.[category] || "")}">
+      <span data-role="destination-label">${escapeHtml(labels[category] || category)}</span><kbd>${escapeHtml(bindingFor(`move:${category}`, String(index + 1)))}</kbd>
     </button>
   `).join("");
   $$("[data-move]").forEach((button) => {
     const category = button.dataset.move;
-    const label = labels[category];
+    const label = labels[category] || category;
     const labelNode = button.querySelector('[data-role="destination-label"]');
     if (labelNode) labelNode.textContent = label;
     button.title = state.config.destinations?.[category] ? `${label} → ${state.config.destinations[category]}` : `Set ${label} folder`;
   });
   $$("#destinations [data-move]").forEach(bindMoveButton);
+  $$("#action-destinations [data-move]").forEach(bindMoveButton);
+  bindDestinationDrops();
 }
 
 function renderSettings() {
   const defaults = { apps: "Apps", videos: "Media", images: "Images", files: "Files" };
-  $("#settings-fields").innerHTML = Object.entries(defaults).map(([category, fallback], index) => `
+  const keys = [...new Set([...Object.keys(state.config.destinations || {}), ...Object.keys(defaults)])].slice(0, 9);
+  $("#settings-fields").innerHTML = keys.map((category, index) => `
     <div class="settings-field" data-settings-category="${category}">
       <label for="label-${category}">${index + 1}</label>
-      <input id="label-${category}" data-destination-label="${category}" aria-label="Shortcut ${index + 1} name" value="${escapeHtml(state.config.labels?.[category] || fallback)}">
+      <input id="label-${category}" data-destination-label="${category}" aria-label="Shortcut ${index + 1} name" value="${escapeHtml(state.config.labels?.[category] || defaults[category] || category)}">
       <input id="destination-${category}" data-destination="${category}" value="${escapeHtml(state.config.destinations?.[category] || "")}">
       <button type="button" data-browse-destination="${category}">Choose…</button>
     </div>
   `).join("");
   $$('[data-browse-destination]').forEach((button) => button.addEventListener("click", () => chooseDestination(button.dataset.browseDestination, false)));
+}
+
+function bindDestinationDrops() {
+  $$("[data-move]").forEach((button) => {
+    if (button.closest("#destinations")) button.addEventListener("dragstart", (event) => event.dataTransfer.setData("application/x-quick-sort-destination", button.dataset.move));
+    button.addEventListener("dragover", (event) => { event.preventDefault(); button.classList.add("drop-target"); });
+    button.addEventListener("dragleave", () => button.classList.remove("drop-target"));
+    button.addEventListener("drop", (event) => {
+      event.preventDefault();
+      button.classList.remove("drop-target");
+      const sourceKey = event.dataTransfer.getData("application/x-quick-sort-destination");
+      if (sourceKey && sourceKey !== button.dataset.move) {
+        reorderDestinations(sourceKey, button.dataset.move);
+        return;
+      }
+      const paths = JSON.parse(event.dataTransfer.getData("application/x-quick-sort-paths") || "[]");
+      if (paths.length) {
+        state.selected = new Set(paths);
+        moveSelected(button.dataset.move);
+      }
+    });
+  });
+}
+
+async function reorderDestinations(sourceKey, targetKey) {
+  const keys = Object.keys(state.config.destinations);
+  keys.splice(keys.indexOf(sourceKey), 1);
+  keys.splice(keys.indexOf(targetKey), 0, sourceKey);
+  const destinations = Object.fromEntries(keys.map((key) => [key, state.config.destinations[key]]));
+  const labels = Object.fromEntries(keys.map((key) => [key, state.config.labels[key] || key]));
+  try {
+    state.config = await api("/api/config", { method: "PUT", body: JSON.stringify({ destinations, labels }) });
+    renderDestinations(); renderSettings();
+  } catch (error) { showToast(error.message); }
 }
 
 function bindMoveButton(button) {
@@ -181,13 +292,17 @@ async function loadFolder(path) {
     $("#folder-name").textContent = "Loading…";
     $("#file-count").textContent = "Reading this folder";
     $("#file-list").innerHTML = '<div class="empty-list">Indexing files and preparing thumbnails…</div>';
-    const data = await api(endpoint("/api/list", { path }));
+    const [data, reviewData] = await Promise.all([
+      api(endpoint("/api/list", { path })),
+      api(endpoint("/api/review", { folder: path })),
+    ]);
     state.currentPath = data.path;
     localStorage.setItem("quick-sort-last-path", data.path);
     state.recentFolders = [data.path, ...state.recentFolders.filter((value) => value !== data.path)].slice(0, 8);
     localStorage.setItem("quick-sort-recent-folders", JSON.stringify(state.recentFolders));
     state.parentPath = data.parent;
     state.items = data.items;
+    state.review = reviewData.records || {};
     state.selected.clear();
     state.primary = null;
     state.renderLimit = 180;
@@ -195,6 +310,11 @@ async function loadFolder(path) {
     renderBreadcrumbs();
     renderFiles();
     showPreview(null);
+    updateProgress();
+    api("/api/index", { method: "POST", body: JSON.stringify({ path: data.path }) }).catch(() => {});
+    monitorIndex();
+    const rememberedSelection = localStorage.getItem(`quick-sort-selection:${data.path}`);
+    if (rememberedSelection && state.items.some((item) => item.path === rememberedSelection)) selectItem(rememberedSelection);
   } catch (error) {
     showToast(error.message);
   }
@@ -223,10 +343,56 @@ function renderBreadcrumbs() {
   $("#parent-folder").disabled = !state.parentPath;
 }
 
+function editDistance(left, right) {
+  const previous = [...Array(right.length + 1).keys()];
+  for (let row = 1; row <= left.length; row += 1) {
+    let diagonal = previous[0]; previous[0] = row;
+    for (let column = 1; column <= right.length; column += 1) {
+      const above = previous[column];
+      previous[column] = Math.min(previous[column] + 1, previous[column - 1] + 1, diagonal + (left[row - 1] === right[column - 1] ? 0 : 1));
+      diagonal = above;
+    }
+  }
+  return previous[right.length];
+}
+
+function fuzzyTokenScore(query, candidate) {
+  if (candidate === query) return 100;
+  if (candidate.startsWith(query)) return 80;
+  if (candidate.includes(query)) return 65;
+  let position = 0;
+  for (const character of candidate) if (character === query[position]) position += 1;
+  if (position === query.length) return 42;
+  const distance = editDistance(query, candidate);
+  return distance <= Math.max(1, Math.floor(query.length * .3)) ? 30 - distance : 0;
+}
+
+function searchScore(item) {
+  if (!state.query.trim()) return 1;
+  const record = state.review[item.path] || {};
+  const synonyms = {
+    images: "image images photo photos picture pictures jpg jpeg png", videos: "video videos movie movies clip clips media mp4 mov",
+    apps: "app apps application installer exe msi", files: "file files document documents other", keep: "keep kept favorite favorites approved",
+    reject: "reject rejected discard review", folder: "folder directory",
+  };
+  const text = [item.name, item.kind, item.extension, item.category, record.status, record.rating ? `rating ${record.rating} ${record.rating}-star` : "", ...(record.tags || []), synonyms[item.category] || "", synonyms[record.status] || ""].join(" ").toLowerCase();
+  const candidates = text.replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/);
+  const queries = state.query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
+  let total = 0;
+  for (const query of queries) {
+    const best = Math.max(0, ...candidates.map((candidate) => fuzzyTokenScore(query, candidate)));
+    if (!best) return 0;
+    total += best;
+  }
+  return total;
+}
+
 function itemMatches(item) {
-  const queryMatch = !state.query || item.name.toLowerCase().includes(state.query.toLowerCase());
+  const queryMatch = searchScore(item) > 0;
   const categoryMatch = state.filter === "all" || item.is_dir || item.category === state.filter;
-  return queryMatch && categoryMatch;
+  const status = state.review[item.path]?.status || "unreviewed";
+  const reviewMatch = state.reviewFilter === "all" || (!item.is_dir && status === state.reviewFilter);
+  return queryMatch && categoryMatch && reviewMatch;
 }
 
 function hideHoverPreview() {
@@ -253,9 +419,9 @@ function queueHoverPreview(item, row) {
     if (!row.isConnected || !row.matches(":hover")) return;
     state.hoverPath = item.path;
     const rect = row.getBoundingClientRect();
-    const width = Math.min(380, window.innerWidth - 28);
+    const width = Math.min(640, window.innerWidth - 28);
     const left = Math.min(rect.right + 14, window.innerWidth - width - 14);
-    const top = Math.max(14, Math.min(rect.top, window.innerHeight - 350));
+    const top = Math.max(14, Math.min(rect.top, window.innerHeight - Math.min(620, window.innerHeight - 28)));
     hoverPreview.style.left = `${Math.max(14, left)}px`;
     hoverPreview.style.top = `${top}px`;
     $("#hover-preview-name").textContent = item.name;
@@ -266,7 +432,7 @@ function queueHoverPreview(item, row) {
       hoverPreviewVideo.classList.remove("hidden");
       hoverPreviewVideo.play().catch(() => { /* Unsupported codecs still retain the static thumbnail. */ });
     } else {
-      hoverPreviewImage.src = endpoint("/api/thumbnail", { path: item.path });
+      hoverPreviewImage.src = endpoint("/api/media", { path: item.path });
       hoverPreviewImage.alt = item.name;
       hoverPreviewImage.classList.remove("hidden");
     }
@@ -277,16 +443,18 @@ function queueHoverPreview(item, row) {
 
 function renderFiles({ preserveScroll = false } = {}) {
   state.visibleItems = state.items.filter(itemMatches);
+  if (state.query.trim()) state.visibleItems.sort((left, right) => searchScore(right) - searchScore(left));
   const list = $("#file-list");
   const previousScroll = preserveScroll ? list.scrollTop : 0;
   const countLabel = `${state.visibleItems.length} ${state.visibleItems.length === 1 ? "item" : "items"}`;
-  $("#file-count").textContent = state.query || state.filter !== "all" ? `${countLabel} in this view` : countLabel;
+  $("#file-count").textContent = state.query || state.filter !== "all" || state.reviewFilter !== "all" ? `${countLabel} in this view` : countLabel;
   if (!state.visibleItems.length) {
     list.innerHTML = `<div class="empty-list">Nothing matches this view.<br>Clear the filter or open another folder.</div>`;
     return;
   }
   const renderedItems = state.visibleItems.slice(0, state.renderLimit);
   list.innerHTML = renderedItems.map((item) => {
+    const review = state.review[item.path] || {};
     let thumbnail;
     if (item.is_dir) {
       thumbnail = '<span class="thumbnail folder-thumb"><i class="folder-shape"></i></span>';
@@ -296,10 +464,10 @@ function renderFiles({ preserveScroll = false } = {}) {
       thumbnail = `<span class="thumbnail">${escapeHtml((item.extension || "file").replace(".", "").slice(0, 5).toUpperCase())}</span>`;
     }
     return `
-      <button class="file-row ${state.selected.has(item.path) ? "selected" : ""}" role="option"
-        aria-selected="${state.selected.has(item.path)}" data-path="${escapeHtml(item.path)}">
+      <button class="file-row ${state.selected.has(item.path) ? "selected" : ""} status-${review.status || "unreviewed"}" role="option"
+        draggable="${!item.is_dir}" aria-selected="${state.selected.has(item.path)}" data-path="${escapeHtml(item.path)}">
         ${thumbnail}
-        <span class="file-copy"><span class="file-name">${escapeHtml(item.name)}</span><span class="file-kind">${escapeHtml(item.kind)}</span></span>
+        <span class="file-copy"><span class="file-name">${escapeHtml(item.name)}</span><span class="file-kind">${escapeHtml(item.kind)}${review.rating ? ` · ${"★".repeat(review.rating)}` : ""}</span></span>
         <span class="file-size">${formatBytes(item.size)}</span>
       </button>`;
   }).join("") + (renderedItems.length < state.visibleItems.length ? `
@@ -314,6 +482,17 @@ function renderFiles({ preserveScroll = false } = {}) {
     });
     row.addEventListener("mouseenter", () => { if (item) queueHoverPreview(item, row); });
     row.addEventListener("mouseleave", hideHoverPreview);
+    row.addEventListener("dragstart", (event) => {
+      if (!item || item.is_dir) return event.preventDefault();
+      if (!state.selected.has(item.path)) {
+        state.selected = new Set([item.path]);
+        state.primary = item;
+      }
+      event.dataTransfer.setData("application/x-quick-sort-paths", JSON.stringify([...state.selected]));
+      event.dataTransfer.effectAllowed = "move";
+      row.classList.add("dragging-file");
+    });
+    row.addEventListener("dragend", () => row.classList.remove("dragging-file"));
   });
   $$(".thumbnail img").forEach((image) => image.addEventListener("error", () => image.closest(".thumbnail").classList.add("thumb-failed")));
   if (preserveScroll) list.scrollTop = previousScroll;
@@ -340,6 +519,7 @@ function selectItem(path, multi = false, range = false) {
   renderFiles();
   showPreview(state.primary);
   updateActionBar();
+  localStorage.setItem(`quick-sort-selection:${state.currentPath}`, state.primary?.path || "");
   requestAnimationFrame(() => document.querySelector(`.file-row[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: "nearest" }));
 }
 
@@ -353,12 +533,33 @@ function updateActionBar() {
   $("#selection-count").textContent = `${count} selected`;
 }
 
+function updateProgress() {
+  const files = state.items.filter((item) => !item.is_dir);
+  const reviewed = files.filter((item) => ["keep", "reject"].includes(state.review[item.path]?.status)).length;
+  $("#review-progress").textContent = `${reviewed.toLocaleString()} / ${files.length.toLocaleString()} reviewed`;
+}
+
+async function monitorIndex() {
+  clearTimeout(state.indexTimer);
+  try {
+    const job = await api(endpoint("/api/index", { path: state.currentPath }));
+    if (job.status === "running" || job.status === "queued") {
+      $("#review-progress").title = `Preparing thumbnails ${job.done} / ${job.total}`;
+      state.indexTimer = setTimeout(monitorIndex, 1800);
+    } else {
+      $("#review-progress").title = "Folder thumbnails ready";
+    }
+  } catch (_) { /* Background indexing is an optimization only. */ }
+}
+
 function resetPreviewElements() {
   imagePreview.classList.add("hidden");
   videoPreview.classList.add("hidden");
   $("#empty-preview").classList.add("hidden");
   $("#file-preview").classList.add("hidden");
   $("#transport").classList.add("hidden");
+  $("#filmstrip").classList.add("hidden");
+  $("#filmstrip").innerHTML = "";
   $("#zoom-controls").classList.add("hidden");
   $("#pixel-badge").classList.add("hidden");
   videoPreview.pause();
@@ -376,10 +577,13 @@ function showPreview(item) {
     $("#empty-preview").classList.remove("hidden");
     $("#selected-name").textContent = "Select a file";
     $("#selected-meta").textContent = "Images and video open here at full fidelity.";
+    $("#review-bar").classList.add("hidden");
     updateActionBar();
     return;
   }
   if (!item.is_dir) document.body.classList.add("inspecting");
+  $("#review-bar").classList.toggle("hidden", item.is_dir);
+  renderReviewControls(item);
   $("#selected-name").textContent = item.name;
   $("#selected-meta").textContent = `${item.kind} · ${formatBytes(item.size)} · ${new Date(item.modified * 1000).toLocaleString()}`;
   if (item.is_dir) {
@@ -407,6 +611,45 @@ function showFileFallback(item, extension) {
   $("#file-preview").classList.remove("hidden");
   $("#file-extension").textContent = extension || "FILE";
   $("#file-preview-name").textContent = item.name;
+}
+
+function renderReviewControls(item) {
+  const record = state.review[item.path] || { status: "unreviewed", rating: 0, tags: [] };
+  $("#keep-button").classList.toggle("active", record.status === "keep");
+  $("#reject-button").classList.toggle("active", record.status === "reject");
+  $$("#rating [data-rating]").forEach((button) => button.classList.toggle("active", Number(button.dataset.rating) <= (record.rating || 0)));
+  $("#tags").value = (record.tags || []).join(", ");
+}
+
+async function updateReview(changes, { advance = false } = {}) {
+  if (!state.primary || state.primary.is_dir) return;
+  const item = state.primary;
+  try {
+    const targets = selectedItems().filter((candidate) => !candidate.is_dir);
+    const records = await Promise.all(targets.map((target) => api("/api/review", { method: "PUT", body: JSON.stringify({ path: target.path, ...changes }) })));
+    targets.forEach((target, index) => { state.review[target.path] = records[index]; });
+    const record = state.review[item.path];
+    renderReviewControls(item);
+    updateProgress();
+    renderFiles({ preserveScroll: true });
+    if (advance) selectRelative(1);
+  } catch (error) { showToast(error.message); }
+}
+
+function buildFilmstrip() {
+  if (!state.primary || !state.primary.kind.toLowerCase().includes("video") || !Number.isFinite(videoPreview.duration) || !videoPreview.duration) return;
+  const times = [0, .25, .5, .75, .98].map((ratio) => Math.max(0, videoPreview.duration * ratio));
+  $("#filmstrip").innerHTML = times.map((seconds) => `
+    <button data-film-time="${seconds}" title="${formatTime(seconds)}"><img loading="lazy" src="${endpoint("/api/video-frame", { path: state.primary.path, time: seconds })}" alt="Frame at ${formatTime(seconds)}"></button>
+  `).join("");
+  $("#filmstrip").classList.remove("hidden");
+  $$("#filmstrip [data-film-time]").forEach((button) => button.addEventListener("click", () => { videoPreview.currentTime = Number(button.dataset.filmTime); }));
+}
+
+function stepFrame(direction) {
+  if (videoPreview.classList.contains("hidden")) return;
+  videoPreview.pause();
+  videoPreview.currentTime = Math.max(0, Math.min(videoPreview.duration || 0, videoPreview.currentTime + direction / 30));
 }
 
 function activeMedia() {
@@ -553,6 +796,108 @@ async function openSelected() {
   } catch (error) { showToast(error.message); }
 }
 
+function openCompare() {
+  const items = selectedItems().filter((item) => ["images", "videos"].includes(item.category));
+  if (items.length !== 2) return showToast("Select exactly two images or videos to compare");
+  state.compareZoom = 1;
+  $("#compare-grid").innerHTML = items.map((item) => {
+    const media = item.category === "images"
+      ? `<img src="${endpoint("/api/media", { path: item.path })}" alt="${escapeHtml(item.name)}">`
+      : `<video src="${endpoint("/api/media", { path: item.path })}" muted loop playsinline></video>`;
+    return `<div class="compare-cell">${media}<span>${escapeHtml(item.name)}</span></div>`;
+  }).join("");
+  $("#tools").close();
+  $("#compare").showModal();
+}
+
+function updateCompareZoom(delta) {
+  state.compareZoom = Math.max(.5, Math.min(8, state.compareZoom * delta));
+  $$("#compare-grid img, #compare-grid video").forEach((media) => { media.style.transform = `scale(${state.compareZoom})`; });
+}
+
+function toggleComparePlayback() {
+  const videos = $$("#compare-grid video");
+  if (!videos.length) return;
+  const shouldPlay = videos.some((video) => video.paused);
+  videos.forEach((video) => { if (shouldPlay) video.play().catch(() => {}); else video.pause(); });
+  $("#compare-play").textContent = shouldPlay ? "Pause both" : "Play both";
+}
+
+async function openDuplicates() {
+  $("#tools").close();
+  $("#duplicates-summary").textContent = "Scanning this folder…";
+  $("#duplicates-results").innerHTML = '<div class="empty-list">Comparing file hashes and image fingerprints…</div>';
+  $("#duplicates").showModal();
+  try {
+    const result = await api(endpoint("/api/duplicates", { path: state.currentPath }));
+    const groups = [
+      ...result.exact.map((paths) => ({ label: "Exact copies", paths })),
+      ...result.visual.map((paths) => ({ label: "Visual matches", paths })),
+    ];
+    $("#duplicates-summary").textContent = `${groups.length} group${groups.length === 1 ? "" : "s"} · ${result.scanned} files scanned`;
+    $("#duplicates-results").innerHTML = groups.length ? groups.map((group, groupIndex) => `
+      <section class="duplicate-group"><strong>${group.label}</strong>${group.paths.map((path) => `<button data-duplicate-group="${groupIndex}" title="Select this group">${escapeHtml(path.split(/[\\/]/).at(-1))}</button>`).join("")}</section>
+    `).join("") : '<div class="empty-list">No duplicates found in this folder.</div>';
+    $$('[data-duplicate-group]').forEach((button) => button.addEventListener("click", () => {
+      state.selected = new Set(groups[Number(button.dataset.duplicateGroup)].paths);
+      state.primary = state.items.find((item) => state.selected.has(item.path)) || null;
+      $("#duplicates").close();
+      renderFiles(); showPreview(state.primary); updateActionBar();
+    }));
+  } catch (error) { $("#duplicates-results").innerHTML = `<div class="empty-list">${escapeHtml(error.message)}</div>`; }
+}
+
+function renameValue(item, index, pattern) {
+  const date = new Date(item.modified * 1000).toISOString().slice(0, 10);
+  const stem = item.name.replace(/\.[^.]+$/, "");
+  return pattern.replaceAll("{name}", stem).replaceAll("{index}", String(index + 1).padStart(3, "0")).replaceAll("{date}", date) + item.extension;
+}
+
+function renderRenamePreview() {
+  const pattern = $("#rename-pattern").value;
+  $("#rename-preview").innerHTML = selectedItems().map((item, index) => `<div><span>${escapeHtml(item.name)}</span><b>→</b><span>${escapeHtml(renameValue(item, index, pattern))}</span></div>`).join("");
+}
+
+function openRename() {
+  if (!state.selected.size) return showToast("Select files to rename first");
+  $("#tools").close();
+  renderRenamePreview();
+  $("#rename").showModal();
+}
+
+async function showMetadata() {
+  if (!state.primary) return;
+  $("#tools").close();
+  $("#metadata-grid").innerHTML = '<dt>Status</dt><dd>Loading…</dd>';
+  $("#metadata").showModal();
+  try {
+    const data = await api(endpoint("/api/metadata", { path: state.primary.path }));
+    const labels = { name: "Name", path: "Location", kind: "Kind", size: "Size", created: "Created", modified: "Modified", extension: "Extension", width: "Width", height: "Height", camera: "Camera", maker: "Maker", captured: "Captured", lens: "Lens", duration: "Duration (seconds)", bitrate: "Bitrate", video_codec: "Video codec", audio_codec: "Audio codec" };
+    $("#metadata-grid").innerHTML = Object.entries(data).filter(([, value]) => value !== null && value !== undefined).map(([key, value]) => {
+      let display = key === "size" ? formatBytes(value) : value;
+      if (["created", "modified"].includes(key)) display = new Date(value * 1000).toLocaleString();
+      return `<dt>${escapeHtml(labels[key] || key)}</dt><dd>${escapeHtml(display)}</dd>`;
+    }).join("");
+  } catch (error) { showToast(error.message); }
+}
+
+function togglePanel(panel) {
+  const className = panel === "library" ? "library-collapsed" : "files-collapsed";
+  const collapsed = document.body.classList.toggle(className);
+  localStorage.setItem(`quick-sort-${className}`, String(collapsed));
+  $(`#toggle-${panel}`).setAttribute("aria-pressed", String(!collapsed));
+  requestAnimationFrame(applyZoom);
+}
+
+function addDestination() {
+  const count = Object.keys(state.config.destinations || {}).length;
+  if (count >= 9) return showToast("A maximum of nine numbered shortcuts is supported");
+  const key = `shortcut${count + 1}`;
+  state.config.destinations[key] = "";
+  state.config.labels[key] = `Shortcut ${count + 1}`;
+  renderSettings();
+}
+
 async function pickFolder() {
   try {
     const result = await api("/api/pick-folder", { method: "POST", body: "{}" });
@@ -572,16 +917,22 @@ function selectRelative(delta) {
 }
 
 function buildCommands() {
+  const destinationCommands = Object.keys(state.config.destinations || {}).slice(0, 9).map((key, index) => ({
+    label: `Move selected to ${state.config.labels?.[key] || key}`, hint: String(index + 1), run: () => moveSelected(key),
+  }));
   const commands = [
     { label: "Open another folder", hint: "Picker", run: pickFolder },
     ...state.locations.map((location) => ({ label: `Go to ${location.name}`, hint: `G ${location.hotkey}`, run: () => loadFolder(location.path) })),
     ...state.recentFolders.slice(0, 5).map((path) => ({ label: `Recent: ${path.split(/[\\/]/).filter(Boolean).at(-1) || path}`, hint: path, run: () => loadFolder(path) })),
     { label: "Reveal selected in system explorer", hint: "", run: revealSelected },
     { label: "Open selected in default app", hint: "", run: openSelected },
-    { label: "Move selected to Apps", hint: "1", run: () => moveSelected("apps") },
-    { label: "Move selected to Media", hint: "2", run: () => moveSelected("videos") },
-    { label: "Move selected to Images", hint: "3", run: () => moveSelected("images") },
-    { label: "Move selected to Other files", hint: "4", run: () => moveSelected("files") },
+    ...destinationCommands,
+    { label: "Keep selected", hint: "K", run: () => updateReview({ status: "keep" }, { advance: true }) },
+    { label: "Reject selected", hint: "X", run: () => updateReview({ status: "reject" }, { advance: true }) },
+    { label: "Compare selected", hint: "", run: openCompare },
+    { label: "Find duplicates", hint: "", run: openDuplicates },
+    { label: "Batch rename selected", hint: "", run: openRename },
+    { label: "Show file information", hint: "", run: showMetadata },
     { label: "Move selected to Recycle Bin", hint: "Ctrl Backspace", run: askToTrash },
     { label: "Undo last move", hint: "Ctrl Z", run: undoMove },
     { label: "Edit sort destinations", hint: "", run: () => $("#settings").showModal() },
@@ -628,9 +979,6 @@ function handleKeydown(event) {
     handleGoChord(event.key);
     return;
   }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); openPalette(); return; }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); undoMove(); return; }
-  if ((event.ctrlKey || event.metaKey) && event.key === "Backspace") { event.preventDefault(); askToTrash(); return; }
   if (isTyping(event) || $("dialog[open]")) return;
   const key = event.key.toLowerCase();
   if (key === "g") {
@@ -639,35 +987,79 @@ function handleKeydown(event) {
     setTimeout(() => { state.goChord = false; }, 1800);
     return;
   }
-  const actions = {
-    arrowdown: () => selectRelative(1), arrowup: () => selectRelative(-1),
-    "/": () => $("#search").focus(), "?": () => $("#shortcuts").showModal(),
-    "1": () => moveSelected("apps"), "2": () => moveSelected("videos"),
-    "3": () => moveSelected("images"), "4": () => moveSelected("files"),
-    " ": toggleVideo, "+": () => setZoom("in"), "=": () => setZoom("in"),
-    "-": () => setZoom("out"), "0": () => setZoom("fit"),
-    m: toggleMute, f: toggleFullscreen,
-    "[": () => adjustSpeed(-1), "]": () => adjustSpeed(1),
-    j: () => jumpVideo(event.shiftKey ? -30 : -10), l: () => jumpVideo(event.shiftKey ? 30 : 10),
-    enter: () => { if (state.primary?.is_dir) loadFolder(state.primary.path); },
-  };
-  if (actions[key]) { event.preventDefault(); actions[key](); }
+  if (event.altKey && /^[1-5]$/.test(key)) { event.preventDefault(); updateReview({ rating: Number(key) }); return; }
+  const shortcut = shortcutFromEvent(event);
+  const actions = [
+    ["previous", () => selectRelative(-1)], ["next", () => selectRelative(1)], ["open_folder", () => { if (state.primary?.is_dir) loadFolder(state.primary.path); }],
+    ["filter", () => $("#search").focus()], ["palette", openPalette], ["shortcuts", () => { renderShortcutEditor(); $("#shortcuts").showModal(); }],
+    ["play", toggleVideo], ["zoom_in", () => setZoom("in")], ["zoom_out", () => setZoom("out")], ["fit", () => setZoom("fit")],
+    ["mute", toggleMute], ["fullscreen", toggleFullscreen], ["speed_down", () => adjustSpeed(-1)], ["speed_up", () => adjustSpeed(1)],
+    ["jump_back", () => jumpVideo(-10)], ["jump_forward", () => jumpVideo(10)], ["jump_back_30", () => jumpVideo(-30)], ["jump_forward_30", () => jumpVideo(30)],
+    ["keep", () => updateReview({ status: "keep" }, { advance: true })], ["reject", () => updateReview({ status: "reject" }, { advance: true })],
+    ["trash", askToTrash], ["undo", undoMove],
+    ...Object.keys(state.config.destinations || {}).slice(0, 9).map((destination, index) => [`move:${destination}`, () => moveSelected(destination), String(index + 1)]),
+  ];
+  const match = actions.find(([action, , fallback]) => bindingFor(action, fallback).toLowerCase() === shortcut?.toLowerCase());
+  if (match) { event.preventDefault(); match[1](); }
 }
 
 function bindEvents() {
+  $("#toggle-library").addEventListener("click", () => togglePanel("library"));
+  $("#toggle-files").addEventListener("click", () => togglePanel("files"));
+  $("#collapse-library").addEventListener("click", () => togglePanel("library"));
+  $("#collapse-files").addEventListener("click", () => togglePanel("files"));
+  $$('[data-collapse-section]').forEach((button) => button.addEventListener("click", () => {
+    const section = $("#" + button.dataset.collapseSection);
+    const collapsed = section.classList.toggle("section-collapsed");
+    localStorage.setItem(`quick-sort-section:${section.id}`, String(collapsed));
+  }));
   $("#open-folder").addEventListener("click", pickFolder);
   $("#open-palette").addEventListener("click", openPalette);
   $("#parent-folder").addEventListener("click", () => loadFolder(state.parentPath));
   $("#back-browser").addEventListener("click", () => document.body.classList.remove("inspecting"));
   $("#settings-button").addEventListener("click", () => $("#settings").showModal());
-  $("#shortcuts-button").addEventListener("click", () => $("#shortcuts").showModal());
+  $("#shortcuts-button").addEventListener("click", () => { renderShortcutEditor(); $("#shortcuts").showModal(); });
   $("#undo-button").addEventListener("click", undoMove);
   $("#reveal-button").addEventListener("click", revealSelected);
   $("#open-default-button").addEventListener("click", openSelected);
   $("#trash-button").addEventListener("click", askToTrash);
+  $("#quick-trash-button").addEventListener("click", askToTrash);
+  $("#tools-button").addEventListener("click", () => $("#tools").showModal());
+  $("#keep-button").addEventListener("click", () => updateReview({ status: "keep" }, { advance: true }));
+  $("#reject-button").addEventListener("click", () => updateReview({ status: "reject" }, { advance: true }));
+  $$("#rating [data-rating]").forEach((button) => button.addEventListener("click", () => updateReview({ rating: Number(button.dataset.rating) })));
+  $("#tags").addEventListener("change", (event) => updateReview({ tags: event.target.value.split(",") }));
+  $("#compare-button").addEventListener("click", openCompare);
+  $("#compare-play").addEventListener("click", toggleComparePlayback);
+  $("#compare-zoom-in").addEventListener("click", () => updateCompareZoom(2));
+  $("#compare-zoom-out").addEventListener("click", () => updateCompareZoom(.5));
+  $("#duplicates-button").addEventListener("click", openDuplicates);
+  $("#rename-button").addEventListener("click", openRename);
+  $("#metadata-button").addEventListener("click", showMetadata);
+  $("#rename-pattern").addEventListener("input", renderRenamePreview);
+  $("#add-destination").addEventListener("click", addDestination);
+  $("#reset-shortcuts").addEventListener("click", () => {
+    shortcutDefinitions().flatMap((section) => section.actions).forEach((action) => {
+      const input = $(`[data-shortcut="${CSS.escape(action.id)}"]`);
+      if (input) input.value = DEFAULT_KEYBINDINGS[action.id] || action.fallback || "";
+    });
+  });
+  $("#save-shortcuts").addEventListener("click", async () => {
+    const keybindings = Object.fromEntries($$('[data-shortcut]').map((input) => [input.dataset.shortcut, input.value]));
+    const assigned = Object.values(keybindings).map((value) => value.toLowerCase()).filter(Boolean);
+    const duplicate = assigned.find((value, index) => assigned.indexOf(value) !== index);
+    if (duplicate) return showToast(`Shortcut ${duplicate} is assigned more than once`);
+    if (Object.values(keybindings).some((value) => !value)) return showToast("Every action needs a shortcut");
+    try {
+      state.config = await api("/api/config", { method: "PUT", body: JSON.stringify({ destinations: state.config.destinations, labels: state.config.labels, keybindings }) });
+      renderDestinations(); updateShortcutLabels(); $("#shortcuts").close(); showToast("Keyboard shortcuts saved");
+    } catch (error) { showToast(error.message); }
+  });
   $("#play-button").addEventListener("click", toggleVideo);
   $("#back-10").addEventListener("click", () => jumpVideo(-10));
+  $("#frame-back").addEventListener("click", () => stepFrame(-1));
   $("#forward-10").addEventListener("click", () => jumpVideo(10));
+  $("#frame-forward").addEventListener("click", () => stepFrame(1));
   $("#mute-button").addEventListener("click", toggleMute);
   $("#volume").addEventListener("input", (event) => {
     videoPreview.volume = Number(event.target.value);
@@ -697,9 +1089,10 @@ function bindEvents() {
     }
   });
   $("#category-filters").addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-filter]");
+    const button = event.target.closest("button[data-filter], button[data-review-filter]");
     if (!button) return;
-    state.filter = button.dataset.filter;
+    if (button.dataset.filter) { state.filter = button.dataset.filter; state.reviewFilter = "all"; }
+    else { state.reviewFilter = button.dataset.reviewFilter; state.filter = "all"; }
     state.renderLimit = 180;
     $$("#category-filters button").forEach((candidate) => candidate.classList.toggle("active", candidate === button));
     renderFiles();
@@ -716,8 +1109,16 @@ function bindEvents() {
       state.config = await api("/api/config", { method: "PUT", body: JSON.stringify({ destinations, labels }) });
       renderDestinations();
       renderSettings();
+      renderShortcutEditor();
       $("#settings").close();
       showToast("Sort destinations saved");
+    } catch (error) { showToast(error.message); }
+  });
+  $("#rename-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/rename", { method: "POST", body: JSON.stringify({ paths: selectedItems().map((item) => item.path), pattern: $("#rename-pattern").value }) });
+      $("#rename").close(); showToast("Files renamed"); await loadFolder(state.currentPath);
     } catch (error) { showToast(error.message); }
   });
   $("#confirm-trash").addEventListener("close", () => { if ($("#confirm-trash").returnValue === "confirm") trashSelected(); });
@@ -737,6 +1138,7 @@ function bindEvents() {
     const dimensions = mediaDimensions(videoPreview);
     if (dimensions.width) $("#selected-meta").textContent += ` · ${dimensions.width} × ${dimensions.height}px`;
     applyZoom();
+    buildFilmstrip();
   });
   videoPreview.addEventListener("timeupdate", () => {
     $("#seek").value = Number.isFinite(videoPreview.duration) && videoPreview.duration ? Math.round(videoPreview.currentTime / videoPreview.duration * 1000) : 0;
@@ -778,6 +1180,18 @@ function bindEvents() {
   $("#pip-button").hidden = !document.pictureInPictureEnabled;
 }
 
+function restoreLayout() {
+  for (const panel of ["library", "files"]) {
+    const className = panel === "library" ? "library-collapsed" : "files-collapsed";
+    const collapsed = localStorage.getItem(`quick-sort-${className}`) === "true";
+    document.body.classList.toggle(className, collapsed);
+    $(`#toggle-${panel}`).setAttribute("aria-pressed", String(!collapsed));
+  }
+  for (const sectionId of ["places-section", "sort-section"]) {
+    $("#" + sectionId).classList.toggle("section-collapsed", localStorage.getItem(`quick-sort-section:${sectionId}`) === "true");
+  }
+}
+
 function startLiveReload() {
   let lastSeen = sessionStorage.getItem("quick-sort-version");
   setInterval(async () => {
@@ -797,6 +1211,7 @@ function startLiveReload() {
   }, 900);
 }
 
+restoreLayout();
 bindEvents();
 startLiveReload();
 loadInitialData().catch((error) => showToast(error.message));
