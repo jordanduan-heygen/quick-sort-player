@@ -1,0 +1,9 @@
+"""Compatibility entry point for older installs."""
+
+from .dev import main
+
+__all__ = ["main"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
