@@ -118,10 +118,11 @@
       <footer id="action-bar" class="action-bar hidden">
         <div class="action-selection"><span id="selection-count">1 selected</span></div>
         <div class="action-buttons">
-          <button data-move="apps">Apps <kbd>1</kbd></button>
-          <button data-move="videos">Media <kbd>2</kbd></button>
-          <button data-move="images">Images <kbd>3</kbd></button>
-          <button data-move="files">Files <kbd>4</kbd></button>
+          <button data-move="apps"><span data-role="destination-label">Apps</span><kbd>1</kbd><span class="quick-edit" data-edit-destination="apps" title="Choose folder">•••</span></button>
+          <button data-move="videos"><span data-role="destination-label">Media</span><kbd>2</kbd><span class="quick-edit" data-edit-destination="videos" title="Choose folder">•••</span></button>
+          <button data-move="images"><span data-role="destination-label">Images</span><kbd>3</kbd><span class="quick-edit" data-edit-destination="images" title="Choose folder">•••</span></button>
+          <button data-move="files"><span data-role="destination-label">Files</span><kbd>4</kbd><span class="quick-edit" data-edit-destination="files" title="Choose folder">•••</span></button>
+          <button id="open-default-button">Open</button>
           <button id="reveal-button">Reveal</button>
           <button id="trash-button" class="danger-button">Recycle Bin <kbd>Ctrl ⌫</kbd></button>
         </div>
@@ -143,11 +144,11 @@
   <dialog id="settings" class="dialog settings-dialog">
     <form id="settings-form">
       <header class="dialog-head">
-        <div><h2>Sort destinations</h2><p>Keys 1–4 move selected files to these folders.</p></div>
+        <div><h2>Sort shortcuts</h2><p>Rename each shortcut and choose the folder it sends files to.</p></div>
         <button type="button" class="close-dialog" data-close="settings">Close</button>
       </header>
       <div id="settings-fields" class="settings-fields"></div>
-      <footer><button type="submit" class="button button-primary">Save destinations</button></footer>
+      <footer><button type="submit" class="button button-primary">Save shortcuts</button></footer>
     </form>
   </dialog>
 

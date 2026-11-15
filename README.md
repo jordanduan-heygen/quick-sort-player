@@ -7,13 +7,17 @@ pixel level. The app binds to `127.0.0.1` only: files never leave your computer.
 
 - Thumbnail contact sheet for folders, images, video, audio, apps, and files
 - Image and video zoom from Fit through 800%, with drag-to-pan pixel inspection
+- Autoplay on video selection; click the preview itself to play or pause
 - Video-only transport controls, rapid ±10/30 second jumps, and 0.5×–2× speed
-- Configurable one-key moves (`1`–`4`) with collision-safe filenames
+- Configurable, renameable one-key moves (`1`–`4`) with native folder pickers
+- Auto-advance after sorting and Shift-click range selection
 - Recoverable Recycle Bin / Trash action (`Ctrl+Backspace`)
 - Undo for ordinary moves (`Ctrl+Z`)
 - Direct location chords such as `G` then `D` for Downloads
 - Command palette (`Ctrl+K`), search (`/`), and a complete keyboard map (`?`)
 - Native reveal in Explorer/Finder
+- Open-in-default-app fallback for browser-incompatible media and documents
+- Recent folders in the command palette
 - Automatic browser refresh while source files change
 
 ## Windows
@@ -39,9 +43,12 @@ chmod +x setup.sh run.sh
 
 ## Development loop
 
-Run the same launcher and edit anything under `src/quicksortplayer/`. Python,
+Run the development launcher and edit anything under `src/quicksortplayer/`. Python,
 HTML, CSS, and JavaScript changes restart the local service and refresh the open
 browser page automatically.
+
+On Windows, use `run-dev.cmd` for live reload; `run.cmd` is the more reliable
+everyday launcher and avoids creating an extra filesystem-watcher process.
 
 Choose another port if needed:
 
@@ -52,7 +59,7 @@ Choose another port if needed:
 or on Windows:
 
 ```powershell
-.\run.cmd --port 9000
+.\run-dev.cmd --port 9000
 ```
 
 ## Safety

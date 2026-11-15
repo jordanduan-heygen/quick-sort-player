@@ -57,6 +57,7 @@ class RevealRequest(BaseModel):
 
 class ConfigRequest(BaseModel):
     destinations: dict[Literal["apps", "videos", "images", "files"], str]
+    labels: dict[Literal["apps", "videos", "images", "files"], str] | None = None
 
 
 def default_destinations() -> dict[str, str]:
@@ -69,8 +70,16 @@ def default_destinations() -> dict[str, str]:
     }
 
 
+def default_labels() -> dict[str, str]:
+    return {"apps": "Apps", "videos": "Media", "images": "Images", "files": "Files"}
+
+
 def load_config() -> dict[str, object]:
-    base: dict[str, object] = {"destinations": default_destinations(), "show_hidden": False}
+    base: dict[str, object] = {
+        "destinations": default_destinations(),
+        "labels": default_labels(),
+        "show_hidden": False,
+    }
     try:
         stored = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(stored, dict):
@@ -302,6 +311,18 @@ def reveal(request: RevealRequest) -> dict[str, bool]:
     return {"ok": True}
 
 
+@app.post("/api/open")
+def open_in_default_app(request: RevealRequest) -> dict[str, bool]:
+    path = checked_path(request.path)
+    if sys.platform == "win32":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path)])
+    return {"ok": True}
+
+
 @app.post("/api/pick-folder")
 async def pick_folder() -> dict[str, str | None]:
     selected = await run_in_threadpool(choose_folder_native)
@@ -312,6 +333,8 @@ async def pick_folder() -> dict[str, str | None]:
 def update_config(request: ConfigRequest) -> dict[str, object]:
     config = load_config()
     config["destinations"] = request.destinations
+    if request.labels is not None:
+        config["labels"] = request.labels
     save_config(config)
     return config
 

@@ -100,6 +100,7 @@ kbd { font: 500 11px/1.5 inherit; color: var(--faint); background: var(--raised)
 .file-kind { display: block; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
 .file-size { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
 .empty-list { padding: 48px 20px; color: var(--faint); text-align: center; line-height: 1.6; }
+.load-more { min-height: 54px; display: grid; place-items: center; color: var(--faint); font-size: 12px; }
 
 .inspector-pane { display: grid; grid-template-rows: 72px minmax(0, 1fr) auto auto; }
 .inspector-head { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 18px; }
@@ -131,6 +132,8 @@ kbd { font: 500 11px/1.5 inherit; color: var(--faint); background: var(--raised)
 .action-buttons { display: flex; align-items: center; justify-content: flex-end; gap: 6px; overflow-x: auto; }
 .action-buttons button { height: 34px; border: 0; border-radius: var(--radius-control); padding: 0 12px; background: var(--raised); cursor: pointer; white-space: nowrap; }
 .action-buttons kbd { margin-left: 5px; background: transparent; padding: 0; }
+.quick-edit { display: inline-grid; place-items: center; width: 24px; height: 24px; margin-left: 7px; border-left: 1px solid #3b3b3b; color: var(--muted); font-size: 10px; letter-spacing: 1px; }
+.quick-edit:hover { color: #fff; }
 .action-buttons .danger-button { color: #ff879b; }
 
 .dialog { width: min(680px, calc(100vw - 32px)); border: 1px solid #303030; border-radius: 20px; padding: 0; background: #111; color: var(--text); box-shadow: 0 24px 80px rgba(0,0,0,.55); }
@@ -150,9 +153,10 @@ kbd { font: 500 11px/1.5 inherit; color: var(--faint); background: var(--raised)
 .palette-result:hover, .palette-result.active { background: var(--raised); }
 .palette-result span:last-child { color: var(--faint); font-size: 12px; }
 .settings-fields { display: grid; gap: 14px; padding: 0 22px 22px; }
-.settings-field { display: grid; grid-template-columns: 105px minmax(0, 1fr); align-items: center; gap: 12px; }
-.settings-field label { color: var(--muted); }
+.settings-field { display: grid; grid-template-columns: 42px 130px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.settings-field > label { color: var(--muted); font-variant-numeric: tabular-nums; }
 .settings-field input { height: 40px; border: 1px solid #3a3a3a; border-radius: 10px; padding: 0 12px; background: #080808; color: var(--text); }
+.settings-field button { height: 40px; border: 0; border-radius: 10px; padding: 0 13px; background: var(--raised); cursor: pointer; }
 .settings-dialog footer { display: flex; justify-content: flex-end; padding: 16px 22px 22px; }
 .shortcuts-dialog { width: min(820px, calc(100vw - 32px)); }
 .shortcut-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #262626; }
